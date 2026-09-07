@@ -45,6 +45,10 @@
       "destination": "/api/sitemap"
     },
     {
+      "source": "/q/:code",
+      "destination": "/api/q?code=:code"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
@@ -267,6 +271,10 @@
     {
       "path": "/api/cron/renewal-reminders",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/expire-approvals",
+      "schedule": "0 * * * *"
     }
   ]
 }
