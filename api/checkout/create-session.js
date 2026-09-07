@@ -116,16 +116,24 @@ export default async function handler(req, res) {
     const dayPriced = hasDay && (!hasHour || wantsDay);
     let pricePerHour = Number(listing.price_per_hour);
     let pricePerDay  = Number(listing.price_per_day);
+    // Set when a per-date override applies, and shown on the checkout line.
+    let overrideLabel = null;
 
     // Event pricing: a per-date override replaces the base hourly price.
     if (startsAt) {
       try {
         const dateStr = String(startsAt).slice(0, 10);
-        const ovr = await fetch(`${URL_}/rest/v1/listing_price_overrides?listing_id=eq.${listing.id}&override_date=eq.${dateStr}&select=price_pence`, { headers: svc });
+        const ovr = await fetch(`${URL_}/rest/v1/listing_price_overrides?listing_id=eq.${listing.id}&override_date=eq.${dateStr}&select=price_pence,label`, { headers: svc });
         const o = ovr.ok ? (await ovr.json())?.[0] : null;
         if (o?.price_pence > 0) {
           if (dayPriced) pricePerDay = o.price_pence / 100;
           else pricePerHour = o.price_pence / 100;
+          // What the driver is told this is for. A higher price with no
+          // explanation reads as a mistake or a sting; "Event pricing — Ulster
+          // v Leinster" reads as a matchday, which is what it is. Snapshotted
+          // on the override, so renaming the event later cannot change what
+          // somebody was charged for.
+          overrideLabel = o.label || null;
         }
       } catch { /* fall back to base price */ }
     }
@@ -366,7 +374,7 @@ export default async function handler(req, res) {
       payment_method_types: ['card'],
       customer_email: driver?.email || undefined,
       line_items: [
-        { price_data: { currency: 'gbp', product_data: { name: repeatWeeks > 1 ? `Parking — ${listing.title || 'space'} (${repeatWeeks} weekly bookings)` : `Parking — ${listing.title || 'space'}`, description: listing.address || undefined }, unit_amount: bookingPricePence }, quantity: 1 },
+        { price_data: { currency: 'gbp', product_data: { name: repeatWeeks > 1 ? `Parking — ${listing.title || 'space'} (${repeatWeeks} weekly bookings)` : `Parking — ${listing.title || 'space'}`, description: overrideLabel || listing.address || undefined }, unit_amount: bookingPricePence }, quantity: 1 },
         { price_data: { currency: 'gbp', product_data: { name: eventDay ? 'Driver service fee (event day)' : 'Driver service fee' }, unit_amount: SERVICE_FEE_PENCE }, quantity: 1 },
         // Itemised so the driver sees exactly what the extra is for, and that
         // it belongs to the site rather than to us.

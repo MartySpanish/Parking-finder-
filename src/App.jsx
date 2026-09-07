@@ -7522,6 +7522,33 @@ const AdminOverlay = ({ onClose }) => {
     setQr(j.ok ? { state: 'done', rows: j.codes || [], days: j.days } : { state: 'error', error: j.error });
   };
 
+  // ── Event-day pricing ─────────────────────────────────────────────────────
+  // Upcoming high/major events near an active listing. SUGGESTIONS only: the
+  // host agreed a price, so raising it is a decision somebody makes once with
+  // their nod, not something a cron job does to them.
+  const [evp, setEvp] = useState({ state: 'idle' });
+  const loadEvp = async () => {
+    setEvp({ state: 'loading' });
+    const j = await adminPost({ action: 'event-pricing', radiusM: 2000, days: 90 })
+      .catch(e => ({ ok: false, error: e.message }));
+    setEvp(j.ok ? { state: 'done', rows: j.suggestions || [], radius: j.radius } : { state: 'error', error: j.error });
+  };
+  const applyEventPrice = async (row, multiplier) => {
+    const base = row.price_per_day_pence || row.price_per_hour_pence || 0;
+    if (!base) { alert('That listing has no base price to multiply.'); return; }
+    const pricePence = Math.round(base * multiplier);
+    const date = String(row.starts_at).slice(0, 10);
+    const j = await adminPost({
+      action: 'set-event-price', listingId: row.listing_id, date, pricePence,
+      eventId: row.event_id, label: `Event pricing — ${row.event}`,
+    }).catch(e => ({ ok: false, error: e.message }));
+    if (j.ok) {
+      setEvp(s => s.state === 'done' ? { ...s, rows: s.rows.map(x =>
+        (x.listing_id === row.listing_id && String(x.starts_at).slice(0,10) === date)
+          ? { ...x, existing_pence: pricePence, existing_label: `Event pricing — ${row.event}` } : x) } : s);
+    } else { alert(j.error || 'Could not set the price'); }
+  };
+
   const d = state.data;
   const Tile = ({ label, value, accent }) => (
     <div className="bg-white/5 border border-white/10 rounded-2xl p-3.5 text-center">
@@ -7540,6 +7567,68 @@ const AdminOverlay = ({ onClose }) => {
           </div>
         </div>
         <div className="px-4 py-5 pb-16 space-y-5">
+          {/* ── Event-day pricing ──────────────────────────────────────────
+              JustPark's own figure: hosts near big venues using event pricing
+              earn about 57% more a year. Nothing here applies automatically. */}
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-display font-bold text-[#EAF1F8]">Event-day pricing</p>
+                <p className="text-[11px] text-[rgba(234,241,248,0.5)]">High &amp; major events within {((evp.radius || 2000) / 1000).toFixed(1)}km · next 90 days</p>
+              </div>
+              <button onClick={loadEvp} disabled={evp.state === 'loading'}
+                className="text-[#06231f] text-xs font-bold px-3 py-2 rounded-xl btn-teal disabled:opacity-50">
+                {evp.state === 'loading' ? 'Loading…' : evp.state === 'done' ? 'Refresh' : 'Load'}
+              </button>
+            </div>
+
+            {evp.state === 'error' && <p className="text-xs text-[#ff9d9d] mt-3">{evp.error}</p>}
+
+            {evp.state === 'done' && (evp.rows.length === 0 ? (
+              <p className="text-xs text-[rgba(234,241,248,0.55)] mt-3">
+                No big events near a listing in the next 90 days. That is a supply gap, not a bug —
+                the nearest venues need a space listed within walking distance.
+              </p>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {evp.rows.slice(0, 40).map((r, i) => {
+                  const when = new Date(r.starts_at).toLocaleString('en-GB',
+                    { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+                  const base = r.price_per_day_pence || r.price_per_hour_pence || 0;
+                  const set = r.existing_pence;
+                  return (
+                    <div key={`${r.event_id}-${r.listing_id}-${i}`} className="bg-white/[0.04] border border-white/10 rounded-xl p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-[13px] text-[#EAF1F8] truncate">{r.event}</span>
+                        <span className={`text-[10px] font-bold uppercase flex-shrink-0 ${r.demand_tier === 'major' ? 'text-[#ff9d9d]' : 'text-[#FFD27A]'}`}>{r.demand_tier}</span>
+                      </div>
+                      <p className="text-[11px] text-[rgba(234,241,248,0.5)] mt-0.5">
+                        {when} · {r.venue} · {r.listing} {r.metres}m away
+                      </p>
+                      {set ? (
+                        <p className="text-[11.5px] text-[#6BEFB9] mt-1.5">
+                          Priced at £{(set / 100).toFixed(2)} — {r.existing_label}
+                        </p>
+                      ) : (
+                        <div className="flex items-center gap-1.5 mt-2">
+                          <span className="text-[11px] text-[rgba(234,241,248,0.45)]">now £{(base / 100).toFixed(2)}</span>
+                          <button onClick={() => applyEventPrice(r, 1.5)}
+                            className="text-[10.5px] font-bold px-2 py-1 rounded-lg bg-[#5BE7DA]/15 border border-[#5BE7DA]/30 text-[#5BE7DA] active:scale-95">
+                            +50% → £{((base * 1.5) / 100).toFixed(2)}
+                          </button>
+                          <button onClick={() => applyEventPrice(r, 2)}
+                            className="text-[10.5px] font-bold px-2 py-1 rounded-lg bg-[#C9A7FF]/15 border border-[#C9A7FF]/30 text-[#C9A7FF] active:scale-95">
+                            +100% → £{((base * 2) / 100).toFixed(2)}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+
           {/* ── QR codes ───────────────────────────────────────────────────
               Scans per code, with the landing target beside them. Half the run
               used to point at pages that did not exist, so the target and the

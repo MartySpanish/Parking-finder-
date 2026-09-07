@@ -241,6 +241,54 @@ export default async function handler(req, res) {
       }
     }
 
+    // Event-day pricing: what to price up, and the button that does it.
+    if (p?.action === 'event-pricing') {
+      if (!SERVICE) return res.status(200).json({ ok: false, error: 'SUPABASE_SERVICE_ROLE_KEY is not set in Vercel.' });
+      const radius = Math.max(200, Math.min(Number(p.radiusM) || 2000, 20000));
+      const days = Math.max(1, Math.min(Number(p.days) || 90, 365));
+      try {
+        const r = await fetch(`${URL_}/rest/v1/rpc/event_pricing_suggestions`, {
+          method: 'POST', headers: svcH, body: JSON.stringify({ p_radius_m: radius, p_days: days }),
+        });
+        const text = await r.text().catch(() => '');
+        if (!r.ok) return res.status(200).json({ ok: false, error: text.slice(0, 400) || `HTTP ${r.status}` });
+        return res.status(200).json({ ok: true, radius, days, suggestions: JSON.parse(text) });
+      } catch (e) {
+        return res.status(200).json({ ok: false, error: e.message || 'event pricing failed' });
+      }
+    }
+
+    // Apply one. NOT applied automatically anywhere: the host agreed a price,
+    // so raising it is a decision somebody makes, once, with their nod.
+    if (p?.action === 'set-event-price') {
+      if (!SERVICE) return res.status(200).json({ ok: false, error: 'SUPABASE_SERVICE_ROLE_KEY is not set in Vercel.' });
+      const pricePence = Math.round(Number(p.pricePence) || 0);
+      if (!p.listingId || !p.date || !(pricePence > 0)) {
+        return res.status(200).json({ ok: false, error: 'Need a listing, a date and a price above zero.' });
+      }
+      // A sanity ceiling. A fat finger on a suggestion button should not put a
+      // £2,000 day rate in front of a driver.
+      if (pricePence > 50000) {
+        return res.status(200).json({ ok: false, error: `£${(pricePence / 100).toFixed(2)} looks wrong — the cap is £500 a day.` });
+      }
+      try {
+        const r = await fetch(`${URL_}/rest/v1/listing_price_overrides?on_conflict=listing_id,override_date`, {
+          method: 'POST',
+          headers: { ...svcH, Prefer: 'resolution=merge-duplicates,return=representation' },
+          body: JSON.stringify({
+            listing_id: p.listingId, override_date: p.date, price_pence: pricePence,
+            event_id: p.eventId || null, label: p.label || null,
+            updated_at: new Date().toISOString(),
+          }),
+        });
+        const text = await r.text().catch(() => '');
+        if (!r.ok) return res.status(200).json({ ok: false, error: text.slice(0, 400) || `HTTP ${r.status}` });
+        return res.status(200).json({ ok: true, pricePence });
+      } catch (e) {
+        return res.status(200).json({ ok: false, error: e.message || 'could not set the price' });
+      }
+    }
+
     if (p?.action === 'sync-partners') {
       const steps = [];
       const run = async (label, url, method, payload, extraHeaders) => {

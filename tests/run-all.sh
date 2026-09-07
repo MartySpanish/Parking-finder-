@@ -136,6 +136,13 @@ if [ -x "${PGBIN:-/usr/lib/postgresql/16/bin}/initdb" ]; then
     && echo "  partner stats          $(grep -c 'PASS  ' /tmp/pe-t13.log) checks" \
     || { fail=1; echo "  partner stats          FAILED"; grep -m3 -E 'FAIL|ERROR' /tmp/pe-t13.log; }
 
+  tests/db/run.sh supabase/migrations/20260625_rental_listings.sql \
+                  tests/db/event_pricing_seed.sql \
+                  supabase/migrations/20260907_event_pricing.sql \
+                  tests/db/event_pricing.test.sql                  > /tmp/pe-t15.log 2>&1 \
+    && echo "  event pricing          $(grep -c 'PASS  ' /tmp/pe-t15.log) checks" \
+    || { fail=1; echo "  event pricing          FAILED"; grep -m3 -E 'FAIL|ERROR' /tmp/pe-t15.log; }
+
   tests/db/run.sh tests/db/qr_landing_seed.sql \
                   supabase/migrations/20260907_qr_landing.sql \
                   tests/db/qr_landing.test.sql                     > /tmp/pe-t14.log 2>&1 \
