@@ -3,6 +3,7 @@
 // purpose — fewer than fifty partners, so distance is computed in JS, no PostGIS.
 import { supabase, isSupabaseEnabled } from './supabase';
 import { track } from './analytics';
+import { CARD_TIERS, rendersCard, sortWeight } from './partnerTiers';
 
 const EARTH_RADIUS_M = 6_371_000;
 
@@ -25,12 +26,24 @@ export async function findPartnerForListing(listingLat, listingLng) {
   try {
     const { data, error } = await supabase
       .from('partners')
-      .select('id, slug, name, name_irish, tagline, description, logo_url, photo_url, photo_urls, link_url, address, lat, lng, radius_m, priority');
+      // Only the paying tiers are even fetched. A 'listed' partner gets a name
+      // and a pin, which is what free buys — filtering in the query rather than
+      // after it means their details never reach the client at all.
+      .select('id, slug, name, name_irish, tagline, description, logo_url, photo_url, photo_urls, link_url, address, lat, lng, radius_m, priority, tier')
+      .in('tier', CARD_TIERS);
     if (error || !data?.length) return null;
     const matches = data
+      // Belt and braces on the query filter. If the `.in()` above is ever
+      // dropped or the column comes back null, the card still does not render:
+      // rendersCard() treats anything it does not recognise as no card, which
+      // is the direction that fails safe.
+      .filter((p) => rendersCard(p.tier))
       .map((p) => ({ ...p, distance_m: distanceMetres(listingLat, listingLng, p.lat, p.lng) }))
       .filter((p) => p.distance_m <= p.radius_m)
-      .sort((a, b) => b.priority - a.priority || a.distance_m - b.distance_m);
+      // Sponsored first, then the hand-tuned priority, then distance. The boost
+      // is ADDED to priority rather than replacing it, so the ordering Marty
+      // set by hand still holds inside each tier.
+      .sort((a, b) => sortWeight(b) - sortWeight(a) || a.distance_m - b.distance_m);
     return matches[0] ?? null;
   } catch {
     return null;

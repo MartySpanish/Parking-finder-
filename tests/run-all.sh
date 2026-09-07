@@ -121,6 +121,14 @@ if [ -x "${PGBIN:-/usr/lib/postgresql/16/bin}/initdb" ]; then
     && echo "  host approval          $(grep -c 'PASS  ' /tmp/pe-t11.log) checks" \
     || { fail=1; echo "  host approval          FAILED"; grep -m3 -E 'FAIL|ERROR' /tmp/pe-t11.log; }
 
+  # Seed first: the grandfathering backfill needs partners that predate it.
+  tests/db/run.sh supabase/migrations/20260821_partners_table.sql \
+                  tests/db/partner_tiers_seed.sql \
+                  supabase/migrations/20260907_partner_tiers.sql \
+                  tests/db/partner_tiers.test.sql                   > /tmp/pe-t12.log 2>&1 \
+    && echo "  partner tiers          $(grep -c 'PASS  ' /tmp/pe-t12.log) checks" \
+    || { fail=1; echo "  partner tiers          FAILED"; grep -m3 -E 'FAIL|ERROR' /tmp/pe-t12.log; }
+
   tests/db/run.sh supabase/migrations/20260902_app_events_ingest.sql \
                   tests/db/app_events.test.sql                      > /tmp/pe-t9.log 2>&1 \
     && echo "  app events ingest      $(grep -c 'PASS  ' /tmp/pe-t9.log) checks" \
