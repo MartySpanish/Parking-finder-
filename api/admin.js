@@ -224,6 +224,23 @@ export default async function handler(req, res) {
       }
     }
 
+    // QR codes: scans per code, with lands_on beside them so a wrong target is
+    // visible on the same screen as the zero it produced.
+    if (p?.action === 'qr-stats') {
+      if (!SERVICE) return res.status(200).json({ ok: false, error: 'SUPABASE_SERVICE_ROLE_KEY is not set in Vercel.' });
+      const days = Math.max(1, Math.min(Number(p.days) || 90, 365));
+      try {
+        const r = await fetch(`${URL_}/rest/v1/rpc/qr_scan_stats`, {
+          method: 'POST', headers: svcH, body: JSON.stringify({ p_days: days }),
+        });
+        const text = await r.text().catch(() => '');
+        if (!r.ok) return res.status(200).json({ ok: false, error: text.slice(0, 400) || `HTTP ${r.status}` });
+        return res.status(200).json({ ok: true, days, codes: JSON.parse(text) });
+      } catch (e) {
+        return res.status(200).json({ ok: false, error: e.message || 'qr stats failed' });
+      }
+    }
+
     if (p?.action === 'sync-partners') {
       const steps = [];
       const run = async (label, url, method, payload, extraHeaders) => {

@@ -7513,6 +7513,15 @@ const AdminOverlay = ({ onClose }) => {
     setPartnerBusy(null);
   };
 
+  // ── QR codes ──────────────────────────────────────────────────────────────
+  // 26 codes, 90 printed items, and zero recorded scans until /q/ existed.
+  const [qr, setQr] = useState({ state: 'idle' });
+  const loadQr = async (days = 90) => {
+    setQr({ state: 'loading' });
+    const j = await adminPost({ action: 'qr-stats', days }).catch(e => ({ ok: false, error: e.message }));
+    setQr(j.ok ? { state: 'done', rows: j.codes || [], days: j.days } : { state: 'error', error: j.error });
+  };
+
   const d = state.data;
   const Tile = ({ label, value, accent }) => (
     <div className="bg-white/5 border border-white/10 rounded-2xl p-3.5 text-center">
@@ -7531,6 +7540,62 @@ const AdminOverlay = ({ onClose }) => {
           </div>
         </div>
         <div className="px-4 py-5 pb-16 space-y-5">
+          {/* ── QR codes ───────────────────────────────────────────────────
+              Scans per code, with the landing target beside them. Half the run
+              used to point at pages that did not exist, so the target and the
+              number it produced belong on the same line. */}
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-display font-bold text-[#EAF1F8]">QR codes</p>
+                <p className="text-[11px] text-[rgba(234,241,248,0.5)]">Stickers and flyers · last {qr.days || 90} days</p>
+              </div>
+              <button onClick={() => loadQr(90)} disabled={qr.state === 'loading'}
+                className="text-[#06231f] text-xs font-bold px-3 py-2 rounded-xl btn-teal disabled:opacity-50">
+                {qr.state === 'loading' ? 'Loading…' : qr.state === 'done' ? 'Refresh' : 'Load'}
+              </button>
+            </div>
+
+            {qr.state === 'error' && <p className="text-xs text-[#ff9d9d] mt-3">{qr.error}</p>}
+
+            {qr.state === 'done' && (() => {
+              const rows = qr.rows || [];
+              const total = rows.reduce((t, r) => t + (r.scans || 0), 0);
+              const week  = rows.reduce((t, r) => t + (r.this_week || 0), 0);
+              const items = rows.reduce((t, r) => t + (r.quantity || 0), 0);
+              const dead  = rows.filter(r => (r.scans || 0) === 0).length;
+              return (
+                <>
+                  <div className="grid grid-cols-3 gap-2 mt-3">
+                    <Tile label="Scans" value={total.toLocaleString('en-GB')} accent="#5BE7DA"/>
+                    <Tile label="This week" value={week.toLocaleString('en-GB')} accent="#C9A7FF"/>
+                    <Tile label="Never scanned" value={`${dead}/${rows.length}`} accent={dead ? '#FFD27A' : '#6BEFB9'}/>
+                  </div>
+                  <p className="text-[11px] text-[rgba(234,241,248,0.45)] mt-2">{items} printed items across {rows.length} codes</p>
+
+                  <div className="mt-3 space-y-1.5">
+                    {rows.map(r => (
+                      <div key={r.code} className="flex items-start justify-between gap-2 py-1.5 border-t border-white/5">
+                        <div className="min-w-0">
+                          <p className="text-[12.5px] text-[#EAF1F8] font-semibold">
+                            <span className="font-mono text-[#5BE7DA]">{r.code}</span>
+                            <span className="text-[rgba(234,241,248,0.5)] font-normal"> · {r.area}</span>
+                          </p>
+                          <p className="text-[11px] text-[rgba(234,241,248,0.45)] truncate">{r.location}</p>
+                          <p className="text-[10.5px] text-[rgba(234,241,248,0.35)] font-mono">{r.lands_on}</p>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <p className={`text-[14px] font-bold ${(r.scans || 0) === 0 ? 'text-[#FFD27A]' : 'text-[#EAF1F8]'}`}>{r.scans || 0}</p>
+                          <p className="text-[10px] text-[rgba(234,241,248,0.4)]">{r.quantity || 0} up</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+
           {/* ── Partners ───────────────────────────────────────────────────
               The screen that sells the next card. Impressions, taps and click
               rate per partner over 30 days, with the tier beside them so the
