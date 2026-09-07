@@ -24,6 +24,7 @@ import { track } from './analytics';
 // The headline counts, from public/globe/places.json — see the file for why
 // six surfaces were all quoting the bundled fallback instead.
 import { useNetworkStats } from './useNetworkStats';
+import { TIERS, priceLabel } from './partnerTiers';
 import { paymentError } from './errors';
 import CategoryGrid, { CATEGORIES } from './components/home/CategoryGrid';
 import { splitPartnersByCategory } from './data/partnerCategories';
@@ -7456,6 +7457,62 @@ const AdminOverlay = ({ onClose }) => {
     } catch (e) { setMetrics({ state: 'error', error: e.message || 'Request failed' }); }
   };
 
+  // ── Partners ──────────────────────────────────────────────────────────────
+  //
+  // Loaded on demand like the metrics panel. This is the screen that sells the
+  // next card: impressions, taps and click rate per partner, with the tier
+  // beside them so the number and the price are in the same glance.
+  const [partners, setPartners] = useState({ state: 'idle' });
+  const [partnerBusy, setPartnerBusy] = useState(null);
+
+  const adminPost = async (body) => {
+    const { data: sess } = await supabase.auth.getSession();
+    const token = sess?.session?.access_token;
+    const r = await apiFetch('/api/admin', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body) });
+    return r.json().catch(() => ({ ok: false, error: 'No response' }));
+  };
+
+  const loadPartners = async (days = 30) => {
+    setPartners({ state: 'loading' });
+    const j = await adminPost({ action: 'partner-stats', days }).catch(e => ({ ok: false, error: e.message }));
+    setPartners(j.ok ? { state: 'done', rows: j.partners || [], days: j.days } : { state: 'error', error: j.error });
+  };
+
+  const setPartnerTier = async (partnerId, tier) => {
+    setPartnerBusy(partnerId);
+    const j = await adminPost({ action: 'set-partner-tier', partnerId, tier }).catch(e => ({ ok: false, error: e.message }));
+    if (j.ok) {
+      // Patch in place rather than refetching: the aggregate is a 30-day scan
+      // and the only thing that changed is one row's tier.
+      setPartners(s => s.state === 'done'
+        ? { ...s, rows: s.rows.map(r => (r.id === partnerId ? { ...r, tier } : r)) } : s);
+    } else { alert(j.error || 'Could not change the tier'); }
+    setPartnerBusy(null);
+  };
+
+  const sendCheckoutLink = async (partnerId, tier) => {
+    setPartnerBusy(partnerId);
+    try {
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess?.session?.access_token;
+      const r = await apiFetch('/api/partners/checkout-link', { method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ partnerId, tier }) });
+      const j = await r.json().catch(() => ({}));
+      if (j.url) {
+        // Copied rather than opened: this link is for the PARTNER, and opening
+        // it here would start Marty paying for their card himself.
+        try { await navigator.clipboard.writeText(j.url); } catch { /* fall through to the prompt */ }
+        window.prompt(`${priceLabel(tier)} checkout link for ${j.partner} — copied. Send it to them:`, j.url);
+      } else {
+        alert(j.error || 'Could not create the link');
+      }
+    } catch (e) { alert(e.message || 'Could not create the link'); }
+    setPartnerBusy(null);
+  };
+
   const d = state.data;
   const Tile = ({ label, value, accent }) => (
     <div className="bg-white/5 border border-white/10 rounded-2xl p-3.5 text-center">
@@ -7474,6 +7531,87 @@ const AdminOverlay = ({ onClose }) => {
           </div>
         </div>
         <div className="px-4 py-5 pb-16 space-y-5">
+          {/* ── Partners ───────────────────────────────────────────────────
+              The screen that sells the next card. Impressions, taps and click
+              rate per partner over 30 days, with the tier beside them so the
+              number and the price are in one glance. */}
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-display font-bold text-[#EAF1F8]">Partners</p>
+                <p className="text-[11px] text-[rgba(234,241,248,0.5)]">Cards, clicks and tiers · last {partners.days || 30} days</p>
+              </div>
+              <button onClick={() => loadPartners(30)} disabled={partners.state === 'loading'}
+                className="text-[#06231f] text-xs font-bold px-3 py-2 rounded-xl btn-teal disabled:opacity-50">
+                {partners.state === 'loading' ? 'Loading…' : partners.state === 'done' ? 'Refresh' : 'Load'}
+              </button>
+            </div>
+
+            {partners.state === 'error' && <p className="text-xs text-[#ff9d9d] mt-3">{partners.error}</p>}
+
+            {partners.state === 'done' && (() => {
+              const rows = partners.rows || [];
+              const totI = rows.reduce((t, r) => t + (r.impressions || 0), 0);
+              const totC = rows.reduce((t, r) => t + (r.clicks || 0), 0);
+              const paying = rows.filter(r => r.tier !== 'listed');
+              const mrr = paying.reduce((t, r) => t + (TIERS[r.tier]?.pricePence || 0), 0);
+              return (
+                <>
+                  <div className="grid grid-cols-3 gap-2 mt-3">
+                    <Tile label="Shown · 30d" value={totI.toLocaleString('en-GB')} accent="#5BE7DA"/>
+                    <Tile label="Tapped" value={totC.toLocaleString('en-GB')} accent="#C9A7FF"/>
+                    <Tile label="Card MRR" value={`£${(mrr / 100).toFixed(0)}`} accent="#6BEFB9"/>
+                  </div>
+
+                  <div className="mt-3 space-y-2">
+                    {rows.map(r => {
+                      const ctr = r.impressions > 0 ? `${((r.clicks / r.impressions) * 100).toFixed(1)}%` : '—';
+                      const statsUrl = `${window.location.origin}/api/partners/stats?token=${r.stats_token}`;
+                      const busy = partnerBusy === r.id;
+                      return (
+                        <div key={r.id} className="bg-white/[0.04] border border-white/10 rounded-xl p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-[13px] text-[#EAF1F8] truncate">{r.name}</span>
+                            <span className="text-[11px] font-bold text-[#6BEFB9] flex-shrink-0">{priceLabel(r.tier)}</span>
+                          </div>
+                          <div className="flex items-center gap-3 text-[11.5px] text-[rgba(234,241,248,0.6)] mt-1">
+                            <span>{(r.impressions || 0).toLocaleString('en-GB')} shown</span>
+                            <span>{r.clicks || 0} taps</span>
+                            <span className={r.impressions > 0 && r.clicks === 0 ? 'text-[#FFD27A]' : 'text-[#5BE7DA]'}>{ctr}</span>
+                            {r.payment_failed_at && <span className="text-[#ff9d9d]">payment failed</span>}
+                          </div>
+                          <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                            {Object.keys(TIERS).map(t => (
+                              <button key={t} disabled={busy || r.tier === t}
+                                onClick={() => setPartnerTier(r.id, t)}
+                                className={`text-[10.5px] font-bold px-2 py-1 rounded-lg border transition ${
+                                  r.tier === t
+                                    ? 'bg-[#5BE7DA] text-[#06231f] border-[#5BE7DA]'
+                                    : 'bg-white/5 text-[rgba(234,241,248,0.65)] border-white/12 active:scale-95'}`}>
+                                {TIERS[t].label}
+                              </button>
+                            ))}
+                            {r.tier !== 'sponsored' && (
+                              <button disabled={busy} onClick={() => sendCheckoutLink(r.id, r.tier === 'featured' ? 'sponsored' : 'featured')}
+                                className="text-[10.5px] font-bold px-2 py-1 rounded-lg bg-[#C9A7FF]/15 border border-[#C9A7FF]/30 text-[#C9A7FF] active:scale-95 ml-auto">
+                                {busy ? '…' : `Sell ${r.tier === 'featured' ? 'Sponsored' : 'Featured'}`}
+                              </button>
+                            )}
+                          </div>
+                          {/* The link you text them. Their own numbers, no login. */}
+                          <button onClick={() => { navigator.clipboard?.writeText(statsUrl).catch(() => {}); window.prompt('Their stats page — send them this:', statsUrl); }}
+                            className="text-[10.5px] text-[rgba(234,241,248,0.4)] mt-1.5 underline">
+                            copy their stats link
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+
           {/* ── Metrics ────────────────────────────────────────────────────
               The two funnels and the supply list. A funnel step is counted in
               SESSIONS, not taps: one person opening three locked gems is one

@@ -181,6 +181,49 @@ export default async function handler(req, res) {
       }
     }
 
+    // ── Partner tiers and their numbers ─────────────────────────────────
+    //
+    // The stats are the sales tool: "your card was seen 290 times last month
+    // and 19 people tapped through". partner_stats() does the aggregation in
+    // SQL and is service_role only, because it returns the whole book of
+    // business — what each partner pays and when they renew.
+    if (p?.action === 'partner-stats') {
+      if (!SERVICE) return res.status(200).json({ ok: false, error: 'SUPABASE_SERVICE_ROLE_KEY is not set in Vercel.' });
+      const days = Math.max(1, Math.min(Number(p.days) || 30, 365));
+      try {
+        const r = await fetch(`${URL_}/rest/v1/rpc/partner_stats`, {
+          method: 'POST', headers: svcH, body: JSON.stringify({ p_days: days }),
+        });
+        const text = await r.text().catch(() => '');
+        if (!r.ok) return res.status(200).json({ ok: false, error: text.slice(0, 400) || `HTTP ${r.status}` });
+        return res.status(200).json({ ok: true, days, partners: JSON.parse(text) });
+      } catch (e) {
+        return res.status(200).json({ ok: false, error: e.message || 'partner stats failed' });
+      }
+    }
+
+    // Move a partner between tiers by hand — a comp, a downgrade, or setting
+    // the tier after taking payment some other way. The Stripe path writes the
+    // same column from the webhook; this is the manual override beside it.
+    if (p?.action === 'set-partner-tier') {
+      if (!SERVICE) return res.status(200).json({ ok: false, error: 'SUPABASE_SERVICE_ROLE_KEY is not set in Vercel.' });
+      const allowed = ['listed', 'featured', 'sponsored'];
+      if (!p.partnerId || !allowed.includes(p.tier)) {
+        return res.status(200).json({ ok: false, error: 'Need a partner and one of listed/featured/sponsored.' });
+      }
+      try {
+        const r = await fetch(`${URL_}/rest/v1/partners?id=eq.${encodeURIComponent(p.partnerId)}`, {
+          method: 'PATCH', headers: { ...svcH, Prefer: 'return=representation' },
+          body: JSON.stringify({ tier: p.tier }),
+        });
+        const text = await r.text().catch(() => '');
+        if (!r.ok) return res.status(200).json({ ok: false, error: text.slice(0, 400) || `HTTP ${r.status}` });
+        return res.status(200).json({ ok: true, tier: p.tier });
+      } catch (e) {
+        return res.status(200).json({ ok: false, error: e.message || 'tier change failed' });
+      }
+    }
+
     if (p?.action === 'sync-partners') {
       const steps = [];
       const run = async (label, url, method, payload, extraHeaders) => {
