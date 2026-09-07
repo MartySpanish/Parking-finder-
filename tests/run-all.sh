@@ -129,6 +129,13 @@ if [ -x "${PGBIN:-/usr/lib/postgresql/16/bin}/initdb" ]; then
     && echo "  partner tiers          $(grep -c 'PASS  ' /tmp/pe-t12.log) checks" \
     || { fail=1; echo "  partner tiers          FAILED"; grep -m3 -E 'FAIL|ERROR' /tmp/pe-t12.log; }
 
+  tests/db/run.sh supabase/migrations/20260821_partners_table.sql \
+                  supabase/migrations/20260907_partner_tiers.sql \
+                  supabase/migrations/20260907_partner_stats.sql \
+                  tests/db/partner_stats.test.sql                  > /tmp/pe-t13.log 2>&1 \
+    && echo "  partner stats          $(grep -c 'PASS  ' /tmp/pe-t13.log) checks" \
+    || { fail=1; echo "  partner stats          FAILED"; grep -m3 -E 'FAIL|ERROR' /tmp/pe-t13.log; }
+
   tests/db/run.sh supabase/migrations/20260902_app_events_ingest.sql \
                   tests/db/app_events.test.sql                      > /tmp/pe-t9.log 2>&1 \
     && echo "  app events ingest      $(grep -c 'PASS  ' /tmp/pe-t9.log) checks" \
