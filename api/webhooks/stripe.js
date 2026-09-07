@@ -228,6 +228,75 @@ async function markBooking(svc, URL_, sessionId, patch) {
 }
 
 // Booking confirmation emails (driver + host + founder), via Resend. Best-effort.
+// A driveway host has a request waiting, and a driver is holding an
+// authorisation that lapses in 24 hours. Both need telling, and the host needs
+// the two buttons in the email itself — a host who has to find the app, log in
+// and hunt for a queue is a host who answers tomorrow.
+//
+// The links carry the booking's access_token, which is already how the
+// cancellation page authenticates without a login. Nothing in the email
+// identifies the driver beyond what the host needs to decide: when, how long,
+// and the plate.
+async function sendApprovalRequestEmails(svc, URL_, sessionId) {
+  const KEYR = process.env.RESEND_API_KEY;
+  const FROM = process.env.EMAIL_FROM || 'ParkEasy <onboarding@resend.dev>';
+  const APP = process.env.APP_URL || 'https://parkeasy.uk';
+  if (!KEYR || !sessionId) return;
+
+  const br = await fetch(`${URL_}/rest/v1/bookings?stripe_session_id=eq.${encodeURIComponent(sessionId)}&select=*`, { headers: svc });
+  const b = (await br.json())?.[0];
+  if (!b) return;
+  let listing = null;
+  if (b.listing_id) {
+    const lr = await fetch(`${URL_}/rest/v1/rental_listings?id=eq.${b.listing_id}&select=title,address,contact_email,owner_email`, { headers: svc });
+    listing = (await lr.json())?.[0] || null;
+  }
+  const hostTo = listing?.contact_email || listing?.owner_email;
+  const when = b.starts_at
+    ? new Date(b.starts_at).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+    : 'a time to be confirmed';
+  const deadline = b.approval_deadline
+    ? new Date(b.approval_deadline).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'short', hour: '2-digit', minute: '2-digit' })
+    : 'in 24 hours';
+  const link = (answer) =>
+    `${APP}/api/bookings/respond?token=${encodeURIComponent(b.access_token)}&answer=${answer}`;
+
+  const send = async (to, subject, html) => {
+    if (!to) return;
+    try {
+      const r = await fetch('https://api.resend.com/emails', {
+        method: 'POST', headers: { Authorization: `Bearer ${KEYR}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: FROM, to: [to], bcc: bccFor([to]), subject, html }),
+      });
+      if (!r.ok) console.error('EMAIL FAILED', r.status, to, subject, await r.text().catch(() => ''));
+    } catch (e) { console.error('EMAIL FAILED', to, subject, String(e)); }
+  };
+
+  await send(hostTo, `Parking request — ${when}`,
+    `<p>Someone would like to park at <strong>${listing?.title || 'your space'}</strong>.</p>
+     <ul>
+       <li><strong>When:</strong> ${when}</li>
+       <li><strong>For:</strong> ${b.duration_hours || 1} hour(s)</li>
+       <li><strong>Vehicle:</strong> ${b.vehicle_reg || 'not given'}</li>
+     </ul>
+     <p><strong>Their card has been authorised, not charged.</strong> Nothing is taken
+        unless you accept, and nothing is taken at all if you say no.</p>
+     <p>
+       <a href="${link('accept')}" style="background:#2ED3C6;color:#06231f;padding:12px 20px;border-radius:10px;text-decoration:none;font-weight:700">Accept</a>
+       &nbsp;&nbsp;
+       <a href="${link('decline')}" style="background:#eee;color:#333;padding:12px 20px;border-radius:10px;text-decoration:none;font-weight:700">Decline</a>
+     </p>
+     <p style="color:#666;font-size:13px">If you do not answer by ${deadline} the request
+        lapses on its own and the driver is not charged.</p>`);
+
+  await send(b.driver_email, `Request sent — ${listing?.title || 'your parking'}`,
+    `<p>Your request for <strong>${listing?.title || 'the space'}</strong> on ${when} has gone to the host.</p>
+     <p><strong>You have not been charged.</strong> Your card is authorised only —
+        we take the payment if the host accepts, and release it if they do not.</p>
+     <p style="color:#666;font-size:13px">Most hosts answer within a few hours. If nobody
+        answers by ${deadline} the request lapses and the hold comes off automatically.</p>`);
+}
+
 async function sendBookingEmails(svc, URL_, sessionId) {
   const KEYR = process.env.RESEND_API_KEY;
   const FROM = process.env.EMAIL_FROM || 'ParkEasy <onboarding@resend.dev>';
@@ -438,6 +507,21 @@ export default async function handler(req, res) {
               credits_remaining: parseInt(s.metadata.num_credits || '0', 10) || 0,
             }),
           }).catch(() => {});
+        } else if (s.metadata?.needs_approval === 'true') {
+          // A driveway. The card is AUTHORISED, not charged: this is a request
+          // until the host answers it, so the booking must not be marked paid
+          // and the driver must not get a confirmation for a space nobody has
+          // agreed to give them.
+          //
+          // The database refuses status 'paid' on an approval booking with no
+          // host_responded_at (bookings_host_approval_chk), so a future edit
+          // that sends this down the wrong branch fails loudly rather than
+          // quietly charging somebody.
+          await markBooking(svc, URL_, s.id, {
+            status: 'awaiting_host',
+            stripe_payment_intent: s.payment_intent || null,
+          });
+          await sendApprovalRequestEmails(svc, URL_, s.id).catch(e => console.error('approval request email', e));
         } else {
           await markBooking(svc, URL_, s.id, { status: 'paid', stripe_payment_intent: s.payment_intent || null });
           await sendBookingEmails(svc, URL_, s.id);

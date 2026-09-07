@@ -6769,12 +6769,22 @@ const BookingsPanel = ({ user }) => {
           const hostEarns = b.booking_price_pence - (b.application_fee_pence - b.service_fee_pence);
           const when = b.starts_at ? new Date(b.starts_at).toLocaleString('en-GB', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }) : '—';
           const cancellable = b.status === 'paid' && (!b.starts_at || Date.parse(b.starts_at) > Date.now());
-          const statusColor = b.status==='paid' ? 'text-[#6BEFB9]' : b.status==='cancelled' ? 'text-[#FFD27A]' : b.status==='pending' ? 'text-[#8da2bd]' : 'text-red-300';
+          // A request on somebody's driveway. The card is authorised, not
+          // charged, and the host has not agreed to anything yet — so this row
+          // must not read like a confirmed booking.
+          const awaiting = b.status === 'awaiting_host';
+          const statusColor = b.status==='paid' ? 'text-[#6BEFB9]'
+            : awaiting ? 'text-[#FFD27A]'
+            : b.status==='cancelled' || b.status==='expired' ? 'text-[#FFD27A]'
+            : b.status==='declined' ? 'text-[#ff9d9d]'
+            : b.status==='pending' ? 'text-[#8da2bd]' : 'text-red-300';
+          const statusLabel = awaiting ? 'awaiting host'
+            : b.status === 'expired' ? 'no answer' : b.status;
           return (
             <div key={b.id} className="py-2.5">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-semibold text-[13px] text-[#EAF1F8] truncate">{titles[b.listing_id] || 'Space'}</span>
-                <span className={`text-[11px] font-bold uppercase ${statusColor}`}>{b.status}</span>
+                <span className={`text-[11px] font-bold uppercase ${statusColor}`}>{statusLabel}</span>
               </div>
               <div className="flex items-center justify-between gap-2 text-[11.5px] text-[rgba(234,241,248,0.55)] mt-0.5">
                 <span>{asHost ? '🅿️ your space' : '🚗 you booked'} · {when} · {b.duration_hours}h</span>
@@ -6796,6 +6806,27 @@ const BookingsPanel = ({ user }) => {
                 </span>
               </div>
               {b.status === 'cancelled' && b.refund_pence > 0 && <p className="text-[11px] text-[#FFD27A] mt-0.5">Refunded {gbp(b.refund_pence)}</p>}
+              {/* The three states a request can be in, said plainly. "You have
+                  not been charged" is the sentence that stops a support email
+                  in every one of them. */}
+              {awaiting && (
+                <p className="text-[11.5px] text-[#FFD27A] mt-1 bg-[#FFD27A]/8 border border-[#FFD27A]/20 rounded-lg px-2.5 py-1.5">
+                  {asHost
+                    ? '⏳ Someone is asking to park here — check your email to accept or decline.'
+                    : '⏳ Waiting for the host to accept. Your card is authorised, not charged.'}
+                </p>
+              )}
+              {b.status === 'declined' && !asHost && (
+                <p className="text-[11.5px] text-[#ff9d9d] mt-1">
+                  The host couldn’t take this one. You were not charged
+                  {b.host_decline_reason ? ` — “${b.host_decline_reason}”` : '.'}
+                </p>
+              )}
+              {b.status === 'expired' && !asHost && (
+                <p className="text-[11.5px] text-[rgba(234,241,248,0.55)] mt-1">
+                  The host didn’t answer in time, so the request lapsed. You were not charged.
+                </p>
+              )}
               {b.status === 'paid' && !asHost && offers[b.listing_id] && (
                 <p className="text-[11.5px] text-[#6BEFB9] mt-1 bg-[#34E0A0]/8 border border-[#34E0A0]/20 rounded-lg px-2.5 py-1.5">
                   📍 While you're there: {offers[b.listing_id].description} — <strong>{offers[b.listing_id].business_name}</strong>
@@ -9155,6 +9186,22 @@ export default function App() {
       track('booking_paid', { from_hotspot: cameFromHotspot() ? 'yes' : 'no' });
       clearHotspotOrigin();
       setFlash({ tone: 'ok', msg: `✅ Booking confirmed — your payment went through.${reg ? ` Vehicle ${reg} — check it's right in Your bookings.` : ''}` });
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (booking === 'requested') {
+      // A driveway. The card is AUTHORISED and the host has not agreed yet, so
+      // this must not say "confirmed" or "your payment went through" — both
+      // would be false, and the second one is the sort of false that arrives as
+      // a chargeback.
+      const reg = ls.get('pe_vehicle_reg', '') || '';
+      // No track() call here on purpose. A request is already recorded as
+      // bookings.status = 'awaiting_host', which survives a closed tab and can
+      // be joined to whether the host accepted — a client event on the return
+      // from Stripe can do neither, and adding an event name means a migration
+      // to widen log_app_event's allowlist for a worse version of a number the
+      // database already holds.
+      setFlash({ tone: 'warn', msg: `⏳ Request sent to the host — you have NOT been charged yet. `
+        + `We'll take the payment only if they accept, and release the hold if they don't.`
+        + `${reg ? ` Vehicle ${reg}.` : ''}` });
       window.history.replaceState({}, '', window.location.pathname);
     } else if (booking === 'cancelled') {
       setFlash({ tone: 'warn', msg: 'Booking cancelled — you weren’t charged.' });

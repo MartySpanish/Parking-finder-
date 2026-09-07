@@ -109,6 +109,18 @@ if [ -x "${PGBIN:-/usr/lib/postgresql/16/bin}/initdb" ]; then
     && echo "  gem region             $(grep -c 'PASS  ' /tmp/pe-t10.log) checks" \
     || { fail=1; echo "  gem region             FAILED"; grep -m3 -E 'FAIL|ERROR' /tmp/pe-t10.log; }
 
+  # The seed goes in BEFORE the migration so its backfill has rows to act on.
+  tests/db/run.sh supabase/migrations/20260625_rental_listings.sql \
+                  supabase/migrations/20260724_stripe_connect.sql \
+                  supabase/migrations/20260725_bookings_functional.sql \
+                  supabase/migrations/20260728_booking_vehicle_reg.sql \
+                  supabase/migrations/20260820_booking_from_hotspot.sql \
+                  tests/db/host_approval_seed.sql \
+                  supabase/migrations/20260907_host_approval.sql \
+                  tests/db/host_approval.test.sql                   > /tmp/pe-t11.log 2>&1 \
+    && echo "  host approval          $(grep -c 'PASS  ' /tmp/pe-t11.log) checks" \
+    || { fail=1; echo "  host approval          FAILED"; grep -m3 -E 'FAIL|ERROR' /tmp/pe-t11.log; }
+
   tests/db/run.sh supabase/migrations/20260902_app_events_ingest.sql \
                   tests/db/app_events.test.sql                      > /tmp/pe-t9.log 2>&1 \
     && echo "  app events ingest      $(grep -c 'PASS  ' /tmp/pe-t9.log) checks" \

@@ -327,10 +327,37 @@ export default async function handler(req, res) {
     // from_hotspot: whether this booking started at a free spot. Stripe metadata
     // values are strings, so it is read back with === 'true' below.
     const fromHotspot = body?.fromHotspot === true || body?.fromHotspot === 'true';
+    // ── Does this space need the host to say yes first? ────────────────────
+    //
+    // A club car park with forty spaces is instant. Somebody's driveway is a
+    // REQUEST: the host may have a car in it, be away, or simply not want that
+    // person that day, and a host who cannot say no has not agreed to anything.
+    //
+    // THE MONEY. capture_method 'manual' AUTHORISES the card here and captures
+    // only when the host accepts. Nothing is taken for a booking that is
+    // refused — no charge, no refund, no five-day wait for it to come back.
+    //
+    // Authorisations lapse after about a week, which sounds like it rules this
+    // out for a booking three weeks ahead. It does not: the hold only has to
+    // survive until the HOST ANSWERS, which is capped at 24 hours below, not
+    // until the parking date. Capture happens on acceptance and the booking
+    // then behaves like any other.
+    const needsApproval = listing.requires_host_approval === true;
+    // The sooner of 24 hours and the start time. A request for a space in three
+    // hours cannot sit for a day, and nobody should be left holding an
+    // authorisation for a slot that has already begun.
+    const firstStart = occurrences[0]?.starts_at ? Date.parse(occurrences[0].starts_at) : null;
+    const approvalDeadline = needsApproval
+      ? new Date(Math.min(now + 24 * 3600000, firstStart || Infinity)).toISOString()
+      : null;
+
     const meta = {
       listing_id: listing.id, host_id: listing.owner_id,
       duration: String(durationHours), weeks: String(repeatWeeks),
       from_hotspot: String(fromHotspot),
+      // Read by the webhook, which decides between 'paid' and 'awaiting_host'
+      // without having to re-read the listing (which may have changed).
+      needs_approval: String(needsApproval),
     };
 
     const stripe = new Stripe(KEY, { httpClient: Stripe.createFetchHttpClient(), maxNetworkRetries: 2, timeout: 20000 });
@@ -359,15 +386,23 @@ export default async function handler(req, res) {
       // destination, no application fee. Stripe rejects both on a charge with
       // no connected account, and there is nowhere for them to point anyway.
       payment_intent_data: invoiceMode
-        ? { metadata: meta }
+        ? { metadata: meta, ...(needsApproval ? { capture_method: 'manual' } : {}) }
         : {
             application_fee_amount: applicationFeePence,
             transfer_data: { destination: host.stripe_account_id },
             metadata: meta,
+            // Authorise now, capture when the host accepts. The application fee
+            // and the transfer to the host both happen at capture, so a
+            // declined request moves no money at all.
+            ...(needsApproval ? { capture_method: 'manual' } : {}),
           },
       metadata: meta,
       expires_at: Math.floor(now / 1000) + 30 * 60,   // hold the slot for 30 min max
-      success_url: `${APP_URL}/?booking=success&session_id={CHECKOUT_SESSION_ID}`,
+      // The return page has to say something different for a request: nothing
+      // has been charged and the host has not agreed yet. Carried in the URL
+      // rather than looked up, so the message is right on the first paint
+      // instead of after a round-trip.
+      success_url: `${APP_URL}/?booking=${needsApproval ? 'requested' : 'success'}&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${APP_URL}/?booking=cancelled`,
     });
 
@@ -396,6 +431,12 @@ export default async function handler(req, res) {
       // Null under invoice mode, and that is the flag the refund path reads:
       // no destination means no transfer to reverse.
       stripe_destination: host?.stripe_account_id || null, status: 'pending',
+      // Snapshotted, like payout_mode below and for the same reason: a host
+      // turning approval off next month must not retroactively change the rules
+      // of a booking already taken, and turning it on must not strand one that
+      // was sold as instant.
+      requires_host_approval: needsApproval,
+      approval_deadline: i === 0 ? approvalDeadline : null,
       // Snapshotted, not looked up later. A listing's payout mode and the
       // operator's share can both change; what was owed on a booking already
       // taken cannot.
