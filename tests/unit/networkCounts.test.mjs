@@ -44,10 +44,8 @@ it('prerender refuses to run on a missing or malformed stats block', () => {
 });
 
 it('the generator derives the EV count rather than trusting a module length', () => {
-  // niAll, not all: the EV figure sits in the same sentence as the spot count
-  // and has to be scoped to Northern Ireland for the same reason.
-  assert.match(generator, /ev:\s*niAll\.filter\(s => s\.ev\?\.available\)\.length/,
-    'the EV count is no longer derived from the Northern Ireland spot data');
+  assert.match(generator, /ev:\s*all\.filter\(s => s\.ev\?\.available\)\.length/,
+    'the EV count is no longer derived from the spot data');
   // EV_SPOTS.length is 197; the real answer counts chargers recorded on spots
   // in all five modules. Reading a length here would understate it by ten.
   assert.ok(!/ev:\s*EV_SPOTS\.length/.test(generator),

@@ -169,17 +169,26 @@ const counts = spaces.reduce((m, s) => (m[s.t] = (m[s.t] || 0) + 1, m), {});
 // because 85% is in signed host agreements and must not be able to drift on a
 // marketing page.
 //
-// AND COUNTED FOR NORTHERN IRELAND, which is what the page actually claims.
-// "744 parking spots across Northern Ireland" was wrong by ninety: Dublin 14,
-// Cork 14, Galway 15, Manchester 14, Glasgow 16, Edinburgh 11, Perth 6, all
-// from the pilot and APCOA datasets. The wording is the claim, so the count has
-// to match the wording rather than the array length. inNorthernIreland() is
-// shared with the app so the hero and the globe card cannot answer differently.
+// THE HEADLINE COUNTS THE WHOLE NETWORK, and the copy beside it names the whole
+// geography: Northern Ireland, the Republic and Britain. Ninety of these spots
+// are in Dublin, Cork, Galway, Manchester, Glasgow, Edinburgh and Perth, so
+// "across Northern Ireland" on its own was false. The wording was widened
+// rather than the number cut.
+//
+// THE TOTAL IS NOT spaces.length. That array holds the 89 BUNDLED gems, which
+// the app swaps out at runtime for the live ones (withDbGems in App.jsx). So a
+// sentence reading "744 spots including 133 hidden gems" would be false in its
+// own second clause — 744 contains 89 gems, not 133. The honest total is the
+// non-gem spots plus whatever the gem table actually holds.
+const nonGemSpaces = spaces.filter(s => s.t !== 'gem').length;
+
+// The NI-only breakdown. Not printed anywhere today — the copy names all three
+// territories — but recorded because it is the number any Northern Ireland
+// claim has to use, and because it is the thing that was silently wrong.
 const niAll    = all.filter(inNorthernIreland);
 // A globe dot stores its position as c: [lng, lat] for the canvas, not as
 // lat/lng properties, so it has to be adapted rather than passed straight in.
-// Passing it raw silently matched nothing and produced a count of zero — which
-// is the failure this whole file is supposed to prevent, so it is worth naming.
+// Passing it raw silently matched nothing and produced a count of zero.
 const niSpaces = spaces.filter(s => inNorthernIreland({ lat: s.c[1], lng: s.c[0], town: s.town }));
 const niTowns  = new Set(niSpaces.map(s => s.town));
 
@@ -187,55 +196,58 @@ const niTowns  = new Set(niSpaces.map(s => s.town));
 //
 // The bundled gems are a fallback the app uses when the hidden_gems query
 // fails; the live table is what a subscriber actually sees. They disagree —
-// 89 bundled against 105 published in Northern Ireland — and the homepage was
-// quoting the fallback. hidden_gem_stats.published_ni is region-filtered in
-// SQL, by an explicit town list rather than geometry, because County Donegal
-// sits inside any box drawn round Northern Ireland.
+// 89 bundled against 133 published — and the homepage was quoting the fallback.
 //
 // No env, or an unreachable database, falls back to the bundled count and says
 // so. A marketing page must not fail the build over a number, and the fallback
 // understates rather than overstates, which is the safe direction.
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY || '';
-const bundledNiGems = niSpaces.filter(s => s.t === 'gem').length;
+const bundledGems = counts.gem || 0;
 
-async function liveNiGemCount() {
+async function liveGemCounts() {
   if (!SUPABASE_URL || !SUPABASE_KEY) return null;
   try {
-    const r = await fetch(`${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/hidden_gem_stats?select=published_ni`, {
+    const r = await fetch(`${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/hidden_gem_stats?select=published,published_ni`, {
       headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const rows = await r.json();
-    const n = Number(rows?.[0]?.published_ni);
-    return Number.isInteger(n) && n > 0 ? n : null;
+    const row = (await r.json())?.[0];
+    const n = Number(row?.published);
+    return Number.isInteger(n) && n > 0
+      ? { published: n, publishedNi: Number(row?.published_ni) || null }
+      : null;
   } catch (e) {
-    console.warn(`globe: live gem count unavailable (${e.message}) — using the bundled ${bundledNiGems}`);
+    console.warn(`globe: live gem count unavailable (${e.message}) — using the bundled ${bundledGems}`);
     return null;
   }
 }
 
-const liveGems = await liveNiGemCount();
-if (liveGems && liveGems !== bundledNiGems) {
-  console.log(`globe: hidden gems — ${liveGems} published in NI (bundled fallback holds ${bundledNiGems})`);
+const live = await liveGemCounts();
+const gemTotal = live?.published ?? bundledGems;
+if (live && live.published !== bundledGems) {
+  console.log(`globe: hidden gems — ${live.published} published (bundled fallback holds ${bundledGems})`);
 }
 
 const stats = {
-  // NI-scoped, because the copy beside them says "across Northern Ireland".
-  spaces: niSpaces.length,
-  gems: liveGems ?? bundledNiGems,
-  towns: niTowns.size,
+  // Non-gem spots plus the real gem count, so the headline and the "including
+  // N hidden gems" clause describe the same set.
+  spaces: nonGemSpaces + gemTotal,
+  gems: gemTotal,
+  towns: towns.size,
   // Counted from the source arrays, not from EV_SPOTS.length: a charger can be
   // recorded on a spot in any of the five modules, and the app's own EV filter
-  // is this same test. scripts/prerender.mjs reads it from here so the homepage
-  // and the globe cannot print two different numbers for one thing.
-  ev: niAll.filter(s => s.ev?.available).length,
-  // The whole dataset, kept so the difference is visible rather than lost. The
-  // globe still DRAWS every dot — a map showing Dublin is not a claim about
-  // Northern Ireland, whereas a number beside the words "across Northern
-  // Ireland" is.
-  spacesAll: spaces.length,
-  gemsAll: counts.gem || 0,
+  // is this same test.
+  ev: all.filter(s => s.ev?.available).length,
+  // What the bundled data alone holds, and the Northern Ireland subset of it.
+  // Kept so the difference between "the network" and "Northern Ireland" is a
+  // number somebody can read rather than a thing they have to recompute.
+  spacesBundled: spaces.length,
+  gemsBundled: bundledGems,
+  spacesNi: niSpaces.length,
+  gemsNi: live?.publishedNi ?? niSpaces.filter(s => s.t === 'gem').length,
+  townsNi: niTowns.size,
+  evNi: niAll.filter(s => s.ev?.available).length,
   hostShare: 85,
   generatedAt: new Date().toISOString().slice(0, 10),
 };
@@ -265,4 +277,5 @@ if (!url || !key) {
 console.log(`globe data: ${spaces.length} spaces (${JSON.stringify(counts)}), ${towns.size} towns, `
   + `${Object.keys(areas).length} areas with named places`);
 console.log(`globe stats (what the homepage claims): ${stats.spaces} spaces, ${stats.gems} gems, `
-  + `${stats.towns} towns, ${stats.ev} EV — Northern Ireland only, of ${stats.spacesAll} mapped in total`);
+  + `${stats.towns} towns, ${stats.ev} EV — of which Northern Ireland holds `
+  + `${stats.spacesNi} spaces and ${stats.gemsNi} gems`);

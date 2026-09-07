@@ -21,7 +21,6 @@ import { trackSearch, trackSpotOpen, trackDirections, trackSignup, trackHotspotV
 // app_events. track() mirrors the overlapping names into funnel.js itself,
 // so a call site never wires up both instruments by hand. See src/analytics.js.
 import { track } from './analytics';
-import { inNorthernIreland } from './regions';
 import { paymentError } from './errors';
 import CategoryGrid, { CATEGORIES } from './components/home/CategoryGrid';
 import { splitPartnersByCategory } from './data/partnerCategories';
@@ -1256,7 +1255,7 @@ const PricingModal = ({ isPremium, onClose, onRedeem, gemCount = null }) => {
               it can never disagree with what they are about to see, and it
               includes community spots the moment they are approved. */}
           <p className="text-white/90 text-[13px] mt-1.5">
-            <strong className="text-white">{ALL_SPOTS_STATS.length} parking spots across Northern Ireland</strong>,
+            <strong className="text-white">{ALL_SPOTS_STATS.length} parking spots across Northern Ireland, the Republic and Britain</strong>,
             every one checked before it goes on the map.
           </p>
           {/* The gem count, queried rather than hardcoded, so it moves the day
@@ -3712,18 +3711,18 @@ const SearchTab = ({ mode = 'map', saved, onSave, ratings, onRate, votes, onVote
     // Counted from the live network, never typed in: a hard-coded number is
     // wrong the first time anybody adds a spot.
     //
-    // AND FILTERED TO NORTHERN IRELAND, because the sentence these two numbers
-    // sit in says "across Northern Ireland". networkSpots carries the whole
-    // dataset, including the Dublin, Cork, Galway, Manchester, Glasgow,
-    // Edinburgh and Perth pilot sites — ninety spots that this line was
-    // claiming as Northern Irish. inNorthernIreland() is the same test the
-    // build script uses for the prerendered copy and the globe card, so all
-    // three cannot answer differently.
-    const niSpots   = (networkSpots || []).filter(inNorthernIreland);
-    const gemCount  = niSpots.filter(s => s.badge === 'hidden_gem').length;
+    // THE WORDING NAMES THE WHOLE GEOGRAPHY, so the count covers it. Ninety of
+    // these spots are in Dublin, Cork, Galway, Manchester, Glasgow, Edinburgh
+    // and Perth; the sentence used to say "across Northern Ireland" over all of
+    // them, which was false. The fix is the copy, not a smaller number.
+    //
+    // inNorthernIreland() (src/regions.js) is what any Northern-Ireland-only
+    // claim must use — the globe data still records the NI subset — but this
+    // line is not one of those claims any more.
+    const gemCount  = (networkSpots || []).filter(s => s.badge === 'hidden_gem').length;
     // Counted, never typed. An inflated number is the one thing a stranger can
     // catch you out on, and this one is in the headline's supporting line.
-    const spotTotal = niSpots.length;
+    const spotTotal = (networkSpots || []).length;
     // Same test the booking button uses, so the promise and the button agree.
     const hasBookable = (networkSpots || []).some(s => s.rental && s.listing
       && (Number(s.listing.price_per_hour) > 0 || Number(s.listing.price_per_day) > 0));
@@ -3740,7 +3739,7 @@ const SearchTab = ({ mode = 'map', saved, onSave, ratings, onRate, votes, onVote
             Know where you&rsquo;re parking before you leave the house
           </h1>
           <p className="text-[13.5px] text-[rgba(234,241,248,0.66)] leading-relaxed mt-2">
-            {spotTotal} spots across Northern Ireland &mdash; the free ones, the cheap ones, and{' '}
+            {spotTotal} spots across Northern Ireland, the Republic and Britain &mdash; the free ones, the cheap ones, and{' '}
             <strong className="text-[#EAF1F8]">{gemCount} hidden gems</strong> locals told us about.
           </p>
           {/* The generic subtitle — "Compare nearby car parks, street parking,
@@ -9425,7 +9424,7 @@ export default function App() {
         </div>
       )}
       {showBizModal && <BusinessModal onClose={()=>setShowBizModal(false)}/>}
-      {showPricing  && <PricingModal isPremium={isPremium} onClose={()=>setShowPricing(false)} onRedeem={redeemVipCode} gemCount={gemStats?.published_ni ?? gemStats?.published ?? null}/>}
+      {showPricing  && <PricingModal isPremium={isPremium} onClose={()=>setShowPricing(false)} onRedeem={redeemVipCode} gemCount={gemStats?.published ?? null}/>}
       {rewardUntil && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[210] flex items-center justify-center p-4" onClick={()=>setRewardUntil(null)}>
           <div onClick={e=>e.stopPropagation()} className="bg-[#0e1a2c] rounded-3xl w-full max-w-sm p-8 text-center space-y-4 shadow-2xl">

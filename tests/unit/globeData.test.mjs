@@ -12,6 +12,8 @@
 // file that was actually written, because the two can drift.
 import assert from 'node:assert/strict';
 import { inNorthernIreland } from '../../src/regions.js';
+import { readFileSync as _rf } from 'node:fs';
+const read = p => _rf(new URL(p, import.meta.url), 'utf8');
 import { readFileSync, existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 
@@ -52,29 +54,36 @@ it('ordinary spots ARE named, or the page cannot be searched', () => {
     `only ${named}/${ordinary.length} ordinary spots are named — search would be useless`);
 });
 
-it('the stats are counted, not typed — and scoped to Northern Ireland', () => {
-  // The stats block is NI-scoped; the dot array is not. The globe DRAWS every
-  // dot, including Dublin and Glasgow, because a map showing them is not a
-  // claim — whereas a number printed beside the words "across Northern
-  // Ireland" is. So these two must NOT be equal, and the gap is the ninety
-  // spots the homepage used to claim as Northern Irish.
-  const ni = data.spaces.filter(s => inNorthernIreland({ lat: s.c[1], lng: s.c[0], town: s.town }));
-  assert.equal(data.stats.spaces, ni.length,
-    'stats.spaces is not the Northern Ireland subset');
-  assert.equal(data.stats.spacesAll, data.spaces.length,
-    'stats.spacesAll no longer matches the dots actually drawn');
-  assert.ok(data.stats.spaces < data.stats.spacesAll,
-    'stats.spaces equals the full total — the NI filter is not being applied');
-  assert.equal(data.stats.towns, new Set(ni.map(s => s.town)).size,
-    'stats.towns counts towns outside Northern Ireland');
+it('the headline total and the "including N gems" clause describe one set', () => {
+  // THE BUG THIS GUARDS. spaces.length holds the BUNDLED gems, which the app
+  // swaps out at runtime for the live ones. Publishing spaces.length beside a
+  // live gem count produces "744 spots including 133 hidden gems" — a sentence
+  // whose own second clause contradicts it, since 744 contains 89 gems.
+  const nonGem = data.spaces.filter(s => s.t !== 'gem').length;
+  assert.equal(data.stats.spaces, nonGem + data.stats.gems,
+    'the total is not non-gem spots plus the real gem count');
 
-  // gems comes from the live database when the build can reach it and falls
-  // back to the bundled NI count, so it is checked as a range rather than an
-  // identity: it must be a real count, and never more than the gems that exist.
+  // AND THE SOURCE, because the data check above cannot see this on its own.
+  // When the build cannot reach Supabase the gem count falls back to the
+  // bundled one, and then nonGem + gems == spaces.length exactly — so a
+  // generator rewritten to publish spaces.length passes locally and ships the
+  // contradiction only from Vercel, where the live count differs. That
+  // mutation was tried and got through, which is why this line exists.
+  const generator = read('../../scripts/generate-globe-data.mjs');
+  assert.match(generator, /spaces: nonGemSpaces \+ gemTotal,/,
+    'the generator publishes a raw array length as the headline total again');
+  assert.equal(data.stats.spacesBundled, data.spaces.length,
+    'spacesBundled no longer matches the dots actually drawn');
+
+  // The Northern Ireland subset, still recorded even though the copy names all
+  // three territories.
+  const ni = data.spaces.filter(s => inNorthernIreland({ lat: s.c[1], lng: s.c[0], town: s.town }));
+  assert.equal(data.stats.spacesNi, ni.length, 'stats.spacesNi is not the NI subset');
+  assert.ok(data.stats.spacesNi < data.stats.spacesBundled,
+    'the NI subset equals the whole bundle — the filter is not being applied');
+
   assert.ok(Number.isInteger(data.stats.gems) && data.stats.gems > 0,
     'stats.gems is not a counted number');
-  assert.ok(data.stats.gems <= data.stats.gemsAll || data.stats.gems <= gems.length + 100,
-    'stats.gems is implausibly larger than the gem data');
 
   // 85% is in signed host agreements. It does not move on a marketing page.
   assert.equal(data.stats.hostShare, 85);

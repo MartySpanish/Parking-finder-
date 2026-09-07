@@ -95,20 +95,40 @@ it('anything unplaceable drops out rather than inflating the count', () => {
   }
 });
 
-it('all four surfaces use the one rule', () => {
-  // The build script, for the prerendered text and the three meta descriptions.
+it('the NI breakdown is still computed, from the one rule', () => {
+  // The homepage now names all three territories, so the headline is NOT
+  // NI-scoped — but the Northern Ireland numbers are still recorded, because
+  // they are what any Northern-Ireland-only claim has to use, and because
+  // getting them wrong is what started this.
   assert.match(generator, /import \{ inNorthernIreland \} from '\.\.\/src\/regions\.js'/,
     'the build script no longer uses the shared rule');
-  assert.match(generator, /spaces: niSpaces\.length/,
-    'the build script publishes an unfiltered space count again');
-  // The hero.
-  assert.match(app, /import \{ inNorthernIreland \} from '\.\/regions'/,
-    'App.jsx no longer imports the shared rule');
-  assert.match(app, /const niSpots\s+= \(networkSpots \|\| \[\]\)\.filter\(inNorthernIreland\)/,
-    'the hero counts the whole network again, including the pilot cities');
-  // The globe card reads the same generated stats the prerendered text does.
-  assert.match(globe, /stats\?\.spaces \?\? spaces/,
-    'the globe card is back to counting its props, which are not NI-scoped');
+  assert.match(generator, /spacesNi: niSpaces\.length/,
+    'the build script no longer records the Northern Ireland subset');
+
+  const stats = JSON.parse(read('../../public/globe/places.json')).stats;
+  for (const k of ['spaces', 'gems', 'towns', 'ev', 'spacesNi', 'gemsNi', 'townsNi', 'evNi']) {
+    assert.ok(Number.isInteger(stats[k]), `stats.${k} is missing or not a number`);
+  }
+  assert.ok(stats.spacesNi < stats.spaces,
+    'the NI subset equals the whole network — the filter is not being applied');
+  assert.ok(stats.townsNi <= stats.towns, 'more NI towns than towns');
+});
+
+it('no numbered claim says "across Northern Ireland" on its own', () => {
+  // Ninety of the mapped spots are in Dublin, Cork, Galway, Manchester,
+  // Glasgow, Edinburgh and Perth. A number followed by "across Northern
+  // Ireland" full stop is the false sentence this all started with.
+  const html = read('../../index.html');
+  const prerender = read('../../scripts/prerender.mjs');
+  const claims = [
+    ...[...html.matchAll(/\{\{SPOTS\}\}[^"]*?across Northern Ireland(.{0,30})/g)],
+    ...[...prerender.matchAll(/NETWORK\.spots\} [^`]*?across Northern Ireland(.{0,30})/g)],
+  ];
+  assert.ok(claims.length >= 3, `only ${claims.length} numbered claims found — the copy may have moved`);
+  for (const m of claims) {
+    assert.match(m[1], /^,\s*the Republic and Britain/,
+      `a numbered claim still reads "across Northern Ireland" alone: ...${m[0].slice(-70)}`);
+  }
 });
 
 it('the non-NI city list is a list, not a guess', () => {
