@@ -96,6 +96,19 @@ if [ -x "${PGBIN:-/usr/lib/postgresql/16/bin}/initdb" ]; then
     && echo "  apcoa publish gate     $(grep -c 'PASS  ' /tmp/pe-t8.log) checks" \
     || { fail=1; echo "  apcoa publish gate     FAILED"; grep -m3 -E 'FAIL|ERROR' /tmp/pe-t8.log; }
 
+  # The seed goes in BEFORE the region migration on purpose: it is what gives
+  # the backfill rows to act on. Without it every row is classified by the
+  # trigger instead and a bounding-box backfill passes.
+  tests/db/run.sh supabase/migrations/20260707_promo_codes.sql \
+                  supabase/migrations/20260720_spot_submissions.sql \
+                  supabase/migrations/20260820_hidden_gems.sql \
+                  supabase/migrations/20260823_no_free_tasters.sql \
+                  tests/db/gem_region_seed.sql \
+                  supabase/migrations/20260902_gem_region.sql \
+                  tests/db/gem_region.test.sql                      > /tmp/pe-t10.log 2>&1 \
+    && echo "  gem region             $(grep -c 'PASS  ' /tmp/pe-t10.log) checks" \
+    || { fail=1; echo "  gem region             FAILED"; grep -m3 -E 'FAIL|ERROR' /tmp/pe-t10.log; }
+
   tests/db/run.sh supabase/migrations/20260902_app_events_ingest.sql \
                   tests/db/app_events.test.sql                      > /tmp/pe-t9.log 2>&1 \
     && echo "  app events ingest      $(grep -c 'PASS  ' /tmp/pe-t9.log) checks" \

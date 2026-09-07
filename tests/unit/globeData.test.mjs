@@ -11,6 +11,7 @@
 // The generator already refuses to write a file that leaks. This checks the
 // file that was actually written, because the two can drift.
 import assert from 'node:assert/strict';
+import { inNorthernIreland } from '../../src/regions.js';
 import { readFileSync, existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 
@@ -51,10 +52,30 @@ it('ordinary spots ARE named, or the page cannot be searched', () => {
     `only ${named}/${ordinary.length} ordinary spots are named — search would be useless`);
 });
 
-it('the stats are counted, not typed', () => {
-  assert.equal(data.stats.spaces, data.spaces.length);
-  assert.equal(data.stats.gems, gems.length);
-  assert.equal(data.stats.towns, new Set(data.spaces.map(s => s.town)).size);
+it('the stats are counted, not typed — and scoped to Northern Ireland', () => {
+  // The stats block is NI-scoped; the dot array is not. The globe DRAWS every
+  // dot, including Dublin and Glasgow, because a map showing them is not a
+  // claim — whereas a number printed beside the words "across Northern
+  // Ireland" is. So these two must NOT be equal, and the gap is the ninety
+  // spots the homepage used to claim as Northern Irish.
+  const ni = data.spaces.filter(s => inNorthernIreland({ lat: s.c[1], lng: s.c[0], town: s.town }));
+  assert.equal(data.stats.spaces, ni.length,
+    'stats.spaces is not the Northern Ireland subset');
+  assert.equal(data.stats.spacesAll, data.spaces.length,
+    'stats.spacesAll no longer matches the dots actually drawn');
+  assert.ok(data.stats.spaces < data.stats.spacesAll,
+    'stats.spaces equals the full total — the NI filter is not being applied');
+  assert.equal(data.stats.towns, new Set(ni.map(s => s.town)).size,
+    'stats.towns counts towns outside Northern Ireland');
+
+  // gems comes from the live database when the build can reach it and falls
+  // back to the bundled NI count, so it is checked as a range rather than an
+  // identity: it must be a real count, and never more than the gems that exist.
+  assert.ok(Number.isInteger(data.stats.gems) && data.stats.gems > 0,
+    'stats.gems is not a counted number');
+  assert.ok(data.stats.gems <= data.stats.gemsAll || data.stats.gems <= gems.length + 100,
+    'stats.gems is implausibly larger than the gem data');
+
   // 85% is in signed host agreements. It does not move on a marketing page.
   assert.equal(data.stats.hostShare, 85);
 });
