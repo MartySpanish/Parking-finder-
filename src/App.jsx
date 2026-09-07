@@ -21,6 +21,9 @@ import { trackSearch, trackSpotOpen, trackDirections, trackSignup, trackHotspotV
 // app_events. track() mirrors the overlapping names into funnel.js itself,
 // so a call site never wires up both instruments by hand. See src/analytics.js.
 import { track } from './analytics';
+// The headline counts, from public/globe/places.json — see the file for why
+// six surfaces were all quoting the bundled fallback instead.
+import { useNetworkStats } from './useNetworkStats';
 import { paymentError } from './errors';
 import CategoryGrid, { CATEGORIES } from './components/home/CategoryGrid';
 import { splitPartnersByCategory } from './data/partnerCategories';
@@ -687,11 +690,19 @@ const getCitySpots = (cityId) => [ ...(CITY_SPOTS[cityId] || []), ...(EXTRA_SPOT
 
 // Welcome-screen stats — derived from every town's spots so they never go stale.
 const ALL_SPOTS_STATS = CITIES.flatMap(c => getCitySpots(c.id));
-const WELCOME_STATS = [
-  [ALL_SPOTS_STATS.length, 'Spots', '#34E0A0'],
-  [ALL_SPOTS_STATS.filter(s => s.badge === 'hidden_gem').length, 'Hidden gems', '#C9A7FF'],
-  [ALL_SPOTS_STATS.filter(s => s.badge === 'official').length, 'Car parks', '#7CC4FF'],
-  [CITIES.length, 'Towns', '#5BE7DA'],
+// The bundled counts. Used as the fallback the moment before places.json
+// lands, and for good if it never does — a stat tile must never be blank.
+const BUNDLED_STATS = {
+  spaces: ALL_SPOTS_STATS.length,
+  gems:   ALL_SPOTS_STATS.filter(s => s.badge === 'hidden_gem').length,
+  towns:  CITIES.length,
+};
+const WELCOME_CAR_PARKS = ALL_SPOTS_STATS.filter(s => s.badge === 'official').length;
+const welcomeStats = (st) => [
+  [st.spaces, 'Spots', '#34E0A0'],
+  [st.gems, 'Hidden gems', '#C9A7FF'],
+  [WELCOME_CAR_PARKS, 'Car parks', '#7CC4FF'],
+  [st.towns, 'Towns', '#5BE7DA'],
 ];
 
 // ── Free hidden-gem taster ────────────────────────────────────────────────────
@@ -958,6 +969,11 @@ const Badge = ({ type, sm }) => {
 
 // ── Welcome / Auth Modal ──────────────────────────────────────────────────────
 const WelcomeModal = ({ onJoin, onSkip }) => {
+  // The four tiles on this screen are the first numbers anybody sees, so they
+  // come from the generated stats rather than the bundled arrays. Falls back to
+  // the bundled counts, which is what renders for the instant before the file
+  // lands and for good if it never does.
+  const welcomeNumbers = useNetworkStats(BUNDLED_STATS);
   // 'signup' or 'login'. With real accounts (Supabase) we let people do both.
   const [mode, setMode]   = useState('signup');
   const [name, setName]   = useState('');
@@ -1058,7 +1074,7 @@ const WelcomeModal = ({ onJoin, onSkip }) => {
 
         <div className="p-6 space-y-5">
           <div className="grid grid-cols-4 gap-2 text-center">
-            {WELCOME_STATS.map(([n,l,c])=>(
+            {welcomeStats(welcomeNumbers).map(([n,l,c])=>(
               <div key={l} className="bg-white/5 border border-white/10 rounded-2xl py-3">
                 <span className="block w-1.5 h-1.5 rounded-full mx-auto mb-1.5" style={{background:c, boxShadow:`0 0 8px ${c}66`}}/>
                 <p className="font-display font-extrabold text-[#EAF1F8] text-lg leading-none">{n}</p>
@@ -7330,6 +7346,9 @@ const SyncPartners = () => {
 };
 
 const AdminOverlay = ({ onClose }) => {
+  // App data tiles. Same source as the homepage, so the dashboard cannot tell
+  // Marty one number while the page tells a visitor another.
+  const adminStats = useNetworkStats(BUNDLED_STATS);
   const [state, setState] = useState({ loading: true });
   const [refresh, setRefresh] = useState(0);
   const [acting, setActing] = useState(null);
@@ -7960,9 +7979,13 @@ const AdminOverlay = ({ onClose }) => {
           <div>
             <h3 className="font-display font-bold text-[13px] text-[#EAF1F8] uppercase tracking-widest mb-2.5">App data</h3>
             <div className="grid grid-cols-3 gap-2">
-              <Tile label="Parking spots" value={ALL_SPOTS.length} accent="#5BE7DA"/>
-              <Tile label="Hidden gems" value={ALL_SPOTS.filter(s=>s.badge==='hidden_gem').length} accent="#C9A7FF"/>
-              <Tile label="Towns covered" value={CITIES.length}/>
+              {/* The same numbers the homepage prints. These used to count the
+                  bundled arrays — 744 spots, 89 gems — which is the fallback
+                  list, not what the app serves. The gems figure in particular
+                  was 89 while the live table held 133. */}
+              <Tile label="Parking spots" value={adminStats.spaces} accent="#5BE7DA"/>
+              <Tile label="Hidden gems" value={adminStats.gems} accent="#C9A7FF"/>
+              <Tile label="Towns covered" value={adminStats.towns}/>
             </div>
           </div>
           <div className="text-[12px] leading-relaxed text-[#8da2bd] bg-white/[0.04] border border-white/10 rounded-2xl px-4 py-3.5">
